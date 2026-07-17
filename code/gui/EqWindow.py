@@ -2,7 +2,6 @@ from gui.ControlPoint import ControlPoint
 from PySide6.QtCore import QPointF, QSize, Qt, QLineF
 from PySide6.QtWidgets import QApplication, QMainWindow, QPushButton, QWidget
 from PySide6.QtGui import QPainter, QPainterPath, QPen, QColor
-from AudioEngine import AudioEngine
 import numpy as np
 
 
@@ -135,6 +134,7 @@ class EqWindow(QWidget):
         self.points.sort(key=lambda p: p.x())
         self.selected = self.points.index(newPoint)
         self.update()
+        from AudioEngine import AudioEngine
         AudioEngine.instance.update_gains()
         
 
@@ -168,6 +168,7 @@ class EqWindow(QWidget):
 
     def mouseReleaseEvent(self, event):
         self.dragging = False
+        from AudioEngine import AudioEngine
         AudioEngine.instance.update_gains()
 
 
@@ -177,6 +178,7 @@ class EqWindow(QWidget):
             self.points.pop(self.selected)
             self.selected = -1
             self.update()
+            from AudioEngine import AudioEngine
             AudioEngine.instance.update_gains()
 
 

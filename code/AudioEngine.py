@@ -1,78 +1,75 @@
-from operator import eq
-
 from PySide6.QtWidgets import QSlider
 import numpy as np
 import sounddevice as sd
 import gui.EqWindow
+from audio.spectral_transformer import SpectralTransformer
 
 class AudioEngine():
 
     playing = False
     audio_loaded=False
-    instance: AudioEngine
+    instance: 'AudioEngine'
     windowLength = 512
     step = 256      # 50 % Overlap
     overlap = windowLength - step
-    window = np.hanning(windowLength)
     positionSlider: QSlider
     
 
     def __init__(self, eqWindow: EqWindow):
         self.eqWindow = eqWindow
         self.gains = np.ones(5, dtype=np.float32)
-        self.norm = np.zeros(self.windowLength)
+
+        self.transformer = SpectralTransformer(
+            windowLength=self.windowLength,
+            hopLength=self.step,
+            windowType='hann'
+        )
 
         self.bufferL = np.zeros(self.windowLength)
         self.bufferR = np.zeros(self.windowLength)
 
-        self.frame=0
-
-        for i in range(0, self.windowLength, self.step):
-            end = min(i + self.windowLength, self.windowLength)
-            self.norm[i:end] += self.window[:end - i] ** 2
-
-        self.norm[self.norm < 1e-12] = 1.0
+        self.frame = 0
 
 
     def compare_energy(self):
         if not self.audio_loaded:
             return
         
-        self.gains = np.ones(self.windowLength // 2 + 1)
-        reconstructed = self.reverse_stft()
+        # Analyze and synthesize directly using SpectralTransformer to verify reconstruction
+        spectrum = self.transformer.analyze((self.sig, self.sample_rate))
+        reconstructed = self.transformer.synthesize(spectrum)
+        
         energyOriginal = self.compute_energy(self.sig)
         energyRecons = self.compute_energy(reconstructed)
-        print("Energy Orginal:", energyOriginal)
+        print("Energy Original:", energyOriginal)
         print("Energy Reconstructed:", energyRecons)
         print()
 
-        print("RMS Orginal:", np.sqrt(np.mean(np.pow(self.sig, 2))))
-        print("RMS Reconstructed:", np.sqrt(np.mean(np.pow(reconstructed, 2))))
+        print("RMS Original:", np.sqrt(np.mean(self.sig ** 2)))
+        print("RMS Reconstructed:", np.sqrt(np.mean(reconstructed ** 2)))
         
 
     def compute_energy(self, signal):
-        sqared = np.pow(signal, 2)
-        return np.sum(sqared)
+        squared = signal ** 2
+        return np.sum(squared)
 
-    def reverse_stft(self):
-        frame = 0
-        
-        reconstructed = []
-        nxt = self.next_block()
-        
-        while not nxt is None:
-            reconstructed.append(nxt)
-            nxt = self.next_block()
-
-        return reconstructed
 
     def load_audio(self, sig, sr):
-        self.audio_loaded=True
+        self.audio_loaded = True
+        
+        # Ensure audio signal is stereo; duplicate if mono
+        if sig.ndim == 1:
+            sig = np.column_stack((sig, sig))
+            
         self.sig = sig
-        self.ZxxL = self.stdtft(sig[:, 0])
-        self.ZxxR = self.stdtft(sig[:, 1])
-
         self.sample_rate = sr
+
+        # Analyze using the configured SpectralTransformer
+        spectrum = self.transformer.analyze((sig, sr))
+        
+        # Extract left and right channel spectra
+        self.ZxxL = spectrum.data[:, :, 0]
+        self.ZxxR = spectrum.data[:, :, 1]
 
         self.overlapL = np.zeros(self.windowLength - self.step)
         self.overlapR = np.zeros(self.windowLength - self.step)        
@@ -126,17 +123,12 @@ class AudioEngine():
             self.stream = None
 
     def stdtft(self, sig):
-        numWindows = (len(sig) - self.windowLength) // self.step + 1
+        # Fallback to SpectralTransformer for consistency/backward compatibility
+        spectrum = self.transformer.analyze((sig, self.sample_rate))
+        if spectrum.data.ndim == 3:
+            return spectrum.data[:, :, 0]
+        return spectrum.data
 
-        Zxx = np.zeros((self.windowLength // 2 + 1, numWindows), dtype=np.complex64)
-
-        for i in range(numWindows):
-            start = i * self.step
-            end = start + self.windowLength
-            segment = sig[start:end] * self.window
-            Zxx[:, i] = np.fft.rfft(segment)
-
-        return Zxx
 
     
 

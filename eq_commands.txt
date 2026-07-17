@@ -1,0 +1,29 @@
+# Headless Equalizer Preset Command Examples
+
+# 1. Bass Boost
+python code/main.py --headless -i test-track.mp3 -o bass_boost.wav -p 0.0,0.0 0.3,0.0 0.6,0.5 1.0,0.8
+nix run .# -- --headless -i test-track.mp3 -o bass_boost.wav -p 0.0,0.0 0.3,0.0 0.6,0.5 1.0,0.8
+
+# 2. Treble Boost
+python code/main.py --headless -i test-track.mp3 -o treble_boost.wav -p 0.0,0.8 0.4,0.6 0.7,0.0 1.0,0.0
+nix run .# -- --headless -i test-track.mp3 -o treble_boost.wav -p 0.0,0.8 0.4,0.6 0.7,0.0 1.0,0.0
+
+# 3. Mid Scoop
+python code/main.py --headless -i test-track.mp3 -o mid_scoop.wav -p 0.0,0.1 0.5,0.8 1.0,0.1
+nix run .# -- --headless -i test-track.mp3 -o mid_scoop.wav -p 0.0,0.1 0.5,0.8 1.0,0.1
+
+# 4. Vocal Booster (Midrange Focus)
+python code/main.py --headless -i test-track.mp3 -o vocal_booster.wav -p 0.0,0.7 0.3,0.4 0.5,0.0 0.7,0.4 1.0,0.7
+nix run .# -- --headless -i test-track.mp3 -o vocal_booster.wav -p 0.0,0.7 0.3,0.4 0.5,0.0 0.7,0.4 1.0,0.7
+
+# 5. Flat (Bypass)
+python code/main.py --headless -i test-track.mp3 -o flat.wav -p 0.0,0.0 1.0,0.0
+nix run .# -- --headless -i test-track.mp3 -o flat.wav -p 0.0,0.0 1.0,0.0
+
+# 6. Extreme Low-Pass Filter
+python code/main.py --headless -i test-track.mp3 -o extreme_lpf.wav -p 0.0,0.0 0.1,0.0 0.2,1.0 1.0,1.0
+nix run .# -- --headless -i test-track.mp3 -o extreme_lpf.wav -p 0.0,0.0 0.1,0.0 0.2,1.0 1.0,1.0
+
+# 7. Extreme High-Pass
+python code/main.py --headless -i test-track.mp3 -o extreme_hpf.wav -p 0.0,1.0 0.7,1.0 0.8,0.0 1.0,0.0
+nix run .# -- --headless -i test-track.mp3 -o extreme_hpf.wav -p 0.0,1.0 0.7,1.0 0.8,0.0 1.0,0.0

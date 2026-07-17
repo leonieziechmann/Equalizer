@@ -98,19 +98,10 @@ class EqWindow(QWidget):
 
 
     def interpolate(self, f: float) -> float:
-        if len(self.points) == 0:
-            return 1
-
-        for i in range(len(self.points)-1):
-            if f >= self.points[i].x():
-                x1 = self.points[i].x()
-                x2 = self.points[i+1].x()
-                y1 = 1-self.points[i].y()   
-                y2 = 1-self.points[i+1].y()
-                t = (f - x1) / (x2 - x1) if x2 != x1 else 0
-                return y1 + (y2 - y1) * t
-
-        return self.points[-1].y() 
+        from audio.eq_curve import EqCurve
+        pts = [(p.x(), p.y()) for p in self.points]
+        curve = EqCurve(pts)
+        return curve.interpolate(f) 
 
     def mousePressEvent(self, event):
         if event.button() != Qt.MouseButton.LeftButton:

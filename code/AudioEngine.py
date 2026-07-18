@@ -78,6 +78,86 @@ class AudioEngine():
         
         return f"RMS Original: {rms_orig:.4f} | RMS Equalized: {rms_recon:.4f}"
         
+    def get_comparison_metrics(self):
+        if not self.audio_loaded:
+            return None
+        
+        # Analyze using SpectralTransformer
+        spectrum = self.transformer.analyze((self.sig, self.sample_rate))
+        
+        # Apply the current gains
+        if spectrum.data.ndim == 3:
+            gains_expanded = self.gains[:, np.newaxis, np.newaxis]
+        else:
+            gains_expanded = self.gains[:, np.newaxis]
+        
+        spectrum.data = spectrum.data * gains_expanded
+        
+        # Synthesize equalized audio
+        reconstructed = self.transformer.synthesize(spectrum)
+        
+        # Mix to mono for metrics calculation if multi-channel
+        if self.sig.ndim > 1:
+            orig_mono = np.mean(self.sig, axis=1)
+        else:
+            orig_mono = self.sig
+            
+        if reconstructed.ndim > 1:
+            recon_mono = np.mean(reconstructed, axis=1)
+        else:
+            recon_mono = reconstructed
+            
+        # Align lengths in case of minor overlap/synthesis windowing differences
+        min_len = min(len(orig_mono), len(recon_mono))
+        orig_mono = orig_mono[:min_len]
+        recon_mono = recon_mono[:min_len]
+        
+        # 1. RMS
+        rms_orig = float(np.sqrt(np.mean(orig_mono ** 2)))
+        rms_recon = float(np.sqrt(np.mean(recon_mono ** 2)))
+        
+        # 2. Peak Amplitude
+        peak_orig = float(np.max(np.abs(orig_mono)))
+        peak_recon = float(np.max(np.abs(recon_mono)))
+        
+        # 3. Crest Factor
+        crest_orig = float(peak_orig / rms_orig) if rms_orig > 0 else 0.0
+        crest_recon = float(peak_recon / rms_recon) if rms_recon > 0 else 0.0
+        
+        # 4. Correlation (Pearson correlation coefficient)
+        std_orig = np.std(orig_mono)
+        std_recon = np.std(recon_mono)
+        if std_orig > 0 and std_recon > 0:
+            correlation = float(np.corrcoef(orig_mono, recon_mono)[0, 1])
+        else:
+            correlation = 0.0
+            
+        # 5. MSE
+        mse = float(np.mean((orig_mono - recon_mono) ** 2))
+        
+        # 6. MAE
+        mae = float(np.mean(np.abs(orig_mono - recon_mono)))
+        
+        # 7. SDR (Signal to Distortion Ratio)
+        noise_power = np.sum((orig_mono - recon_mono) ** 2)
+        signal_power = np.sum(orig_mono ** 2)
+        if noise_power > 0 and signal_power > 0:
+            sdr = float(10 * np.log10(signal_power / noise_power))
+        else:
+            sdr = float('inf') if noise_power == 0 else -float('inf')
+            
+        return {
+            'rms_orig': rms_orig,
+            'rms_recon': rms_recon,
+            'peak_orig': peak_orig,
+            'peak_recon': peak_recon,
+            'crest_orig': crest_orig,
+            'crest_recon': crest_recon,
+            'correlation': correlation,
+            'mse': mse,
+            'mae': mae,
+            'sdr': sdr
+        }
 
     def compute_energy(self, signal):
         squared = signal ** 2
@@ -147,20 +227,28 @@ class AudioEngine():
       
     
     def play_audio(self, pos=0.0):
+        import sys
         self.stop()
         self.frame = int(pos * self.ZxxL.shape[1])
 
         self.overlapL[:] = 0
         self.overlapR[:] = 0
 
-        self.stream = sd.OutputStream(
-            samplerate=self.sample_rate,
-            channels=2,
-            blocksize=self.step,
-            callback=self.callback
-        )
-        self.playing = True
-        self.stream.start()
+        try:
+            self.stream = sd.OutputStream(
+                samplerate=self.sample_rate,
+                channels=2,
+                blocksize=self.step,
+                callback=self.callback
+            )
+            self.stream.start()
+            self.playing = True
+            return True
+        except Exception as e:
+            print(f"Error starting audio stream: {e}", file=sys.stderr)
+            self.stream = None
+            self.playing = False
+            return False
 
 
     def stop(self):
@@ -244,6 +332,28 @@ class AudioEngine():
         self.frame += 1     
 
         return np.column_stack((outL, outR))
+
+    def export_audio(self, output_path):
+        if not self.audio_loaded:
+            return False
+        try:
+            spectrum = self.transformer.analyze((self.sig, self.sample_rate))
+            
+            if spectrum.data.ndim == 3:
+                gains_expanded = self.gains[:, np.newaxis, np.newaxis]
+            else:
+                gains_expanded = self.gains[:, np.newaxis]
+                
+            spectrum.data = spectrum.data * gains_expanded
+            reconstructed = self.transformer.synthesize(spectrum)
+            
+            import soundfile as sf
+            sf.write(output_path, reconstructed, self.sample_rate)
+            return True
+        except Exception as e:
+            import sys
+            print(f"Error exporting audio: {e}", file=sys.stderr)
+            return False
 
 
 

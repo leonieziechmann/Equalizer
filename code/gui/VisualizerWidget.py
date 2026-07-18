@@ -62,7 +62,7 @@ class VisualizerWidget(QWidget):
             
             if ax == self.ax_curve:
                 ax.set_xlim(base_freq, 20000)
-                ax.set_ylim(-40, 12)
+                ax.set_ylim(-80, 12)
             else:
                 ax.set_ylim(base_freq, 20000)
                 
@@ -77,6 +77,7 @@ class VisualizerWidget(QWidget):
         self.mesh_pre = None
         self.mesh_post = None
         self.time_axis = None
+        self.mag_peak = 1.0
         
     def on_track_loaded(self):
         engine = AudioEngine.instance
@@ -106,10 +107,16 @@ class VisualizerWidget(QWidget):
         # Average pre-EQ magnitude spectrum of left and right channels
         mag_pre = (np.abs(engine.ZxxL) + np.abs(engine.ZxxR)) / 2.0
         
+        # Find peak magnitude in input data and normalize
+        self.mag_peak = np.max(mag_pre)
+        if self.mag_peak < 1e-9:
+            self.mag_peak = 1.0
+        mag_pre_normalized = mag_pre / self.mag_peak
+        
         # Downsample horizontally to 1000 frames to ensure fast plotting
-        num_frames = mag_pre.shape[1]
+        num_frames = mag_pre_normalized.shape[1]
         step = max(1, num_frames // 1000)
-        mag_pre_ds = mag_pre[:, ::step][:, :1000]
+        mag_pre_ds = mag_pre_normalized[:, ::step][:, :1000]
         
         # Interpolate from linear FFT bins to log-spaced frequency grid (200 bins)
         base_freq = self.sample_rate / engine.windowLength
@@ -157,11 +164,12 @@ class VisualizerWidget(QWidget):
         post_ZxxR = engine.ZxxR * gains_col
         
         mag_post = (np.abs(post_ZxxL) + np.abs(post_ZxxR)) / 2.0
+        mag_post_normalized = mag_post / self.mag_peak
         
         # Downsample horizontally to 1000 frames
-        num_frames = mag_post.shape[1]
+        num_frames = mag_post_normalized.shape[1]
         step = max(1, num_frames // 1000)
-        mag_post_ds = mag_post[:, ::step][:, :1000]
+        mag_post_ds = mag_post_normalized[:, ::step][:, :1000]
         
         # Interpolate to log-frequency scale
         base_freq = self.sample_rate / engine.windowLength
@@ -191,7 +199,7 @@ class VisualizerWidget(QWidget):
         # Update EQ response curve line
         if engine.gains is not None and len(engine.gains) == self.num_bins:
             db_curve = 20 * np.log10(engine.gains + 1e-6)
-            db_curve_clipped = np.clip(db_curve, -40, 12)
+            db_curve_clipped = np.clip(db_curve, -80, 12)
             self.line_curve.set_ydata(db_curve_clipped[1:])
             
         # Update static playhead positions to align with the current position slider value

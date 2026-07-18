@@ -70,15 +70,53 @@ class MainWindow(QMainWindow):
             QSlider::handle:horizontal:hover {
                 background: #b388ff;
             }
+            QComboBox {
+                background-color: #383838;
+                border: 1px solid #555555;
+                border-radius: 4px;
+                padding: 4px 10px;
+                color: #ffffff;
+                font-weight: bold;
+                min-width: 100px;
+            }
+            QComboBox:hover {
+                background-color: #4a4a4a;
+                border: 1px solid #7c4dff;
+            }
+            QComboBox QAbstractItemView {
+                background-color: #282828;
+                color: #e0e0e0;
+                selection-background-color: #7c4dff;
+                selection-color: #ffffff;
+                border: 1px solid #555555;
+            }
             QLabel {
                 font-size: 12px;
                 font-weight: 500;
+            }
+            QTableWidget {
+                background-color: #1e1e1e;
+                alternate-background-color: #252525;
+                gridline-color: #383838;
+                color: #e0e0e0;
+                border: 1px solid #555555;
+                border-radius: 4px;
+                font-size: 11px;
+            }
+            QHeaderView::section {
+                background-color: #383838;
+                color: #00e676;
+                padding: 6px;
+                font-weight: bold;
+                border: 1px solid #555555;
+            }
+            QTableWidget::item {
+                padding: 4px;
             }
         """)
 
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
-        layout = QVBoxLayout(central_widget)
         
         eq_Widget = QWidget()
         eq_layout = QVBoxLayout(eq_Widget)
@@ -88,8 +126,6 @@ class MainWindow(QMainWindow):
         eq_window = EqWindow.EqWindow()
         self.eq_window = eq_window
         AudioEngine.instance = AudioEngine(eq_window) 
-
-        eq_layout.addWidget(eq_window, 1)
 
         # Create control panel for selected points
         controls_panel = QWidget()
@@ -109,7 +145,9 @@ class MainWindow(QMainWindow):
         self.gain_label = QLabel("Gain: -")
         self.gain_label.setMinimumWidth(120)
         self.gain_slider = QSlider(Qt.Orientation.Horizontal)
-        self.gain_slider.setRange(-400, 120)
+        self.gain_slider.setRange(-800, 120)
+        self.gain_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
+        self.gain_slider.setTickInterval(100)  # Ticks every 10 dB
         self.gain_slider.setEnabled(False)
         gain_row_layout.addWidget(self.gain_label, 1)
         gain_row_layout.addWidget(self.gain_slider, 3)
@@ -121,6 +159,8 @@ class MainWindow(QMainWindow):
         self.freq_label.setMinimumWidth(120)
         self.freq_slider = QSlider(Qt.Orientation.Horizontal)
         self.freq_slider.setRange(0, 1000)
+        self.freq_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
+        self.freq_slider.setTickInterval(100)  # 10 ticks across log range
         self.freq_slider.setEnabled(False)
         freq_row_layout.addWidget(self.freq_label, 1)
         freq_row_layout.addWidget(self.freq_slider, 3)
@@ -170,8 +210,6 @@ class MainWindow(QMainWindow):
         controls_layout.addWidget(sliders_widget, 1)
         controls_layout.addWidget(buttons_widget, 1)
         
-        eq_layout.addWidget(controls_panel, 0)
-
         # Connections
         eq_window.pointSelectionChanged.connect(self.update_point_controls)
         self.gain_slider.valueChanged.connect(self.on_gain_slider_changed)
@@ -183,20 +221,37 @@ class MainWindow(QMainWindow):
         from gui.VisualizerWidget import VisualizerWidget
         self.visualizer = VisualizerWidget()
 
-        # Arrange EQ window and Visualizer side-by-side
-        main_content_widget = QWidget()
-        main_content_layout = QHBoxLayout(main_content_widget)
-        main_content_layout.setContentsMargins(0, 0, 0, 0)
-        main_content_layout.setSpacing(15)
-        
-        main_content_layout.addWidget(eq_Widget, 4)
-        main_content_layout.addWidget(self.visualizer, 5)
+        # Instantiate ComparisonTable
+        from gui.ComparisonTable import ComparisonTable
+        self.comparison_table = ComparisonTable()
 
-        layout.addWidget(ControlsGui(eq_window, self.visualizer), 0)
-        layout.addWidget(main_content_widget, 1)
+        # ControlsGui on left side above EQ Window
+        from gui.ControlsGui import ControlsGui
+        self.controls_gui = ControlsGui(eq_window, self.visualizer, self.comparison_table)
 
-        central_widget.setLayout(layout)
+        # Assemble Left Column
+        eq_layout.addWidget(self.controls_gui, 0)
+        eq_layout.addWidget(eq_window, 1)
+        eq_layout.addWidget(controls_panel, 0)
+
+        # Arrange right side: Visualizer and Comparison Table
+        right_widget = QWidget()
+        right_layout = QVBoxLayout(right_widget)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.setSpacing(15)
+        right_layout.addWidget(self.visualizer, 4)
+        right_layout.addWidget(self.comparison_table, 2)
+
+        # Main Layout (Horizontal)
+        main_layout = QHBoxLayout(central_widget)
+        main_layout.setContentsMargins(15, 15, 15, 15)
+        main_layout.setSpacing(15)
+        main_layout.addWidget(eq_Widget, 4)
+        main_layout.addWidget(right_widget, 5)
+
+        central_widget.setLayout(main_layout)
         eq_Widget.setLayout(eq_layout)
+        controls_panel.setLayout(controls_layout)
 
     def update_point_controls(self):
         selected_idx = self.eq_window.selected
@@ -208,7 +263,7 @@ class MainWindow(QMainWindow):
             self.remove_button.setEnabled(True)
             
             # Map point.y() to gain_db
-            gain_db = (1.0 - point.y()) * 52.0 - 40.0
+            gain_db = (1.0 - point.y()) * 92.0 - 80.0
             # Map point.x() to freq_hz
             freq_hz = 20.0 * (1000.0 ** point.x())
             
@@ -236,7 +291,7 @@ class MainWindow(QMainWindow):
         if selected_idx >= 0 and selected_idx < len(self.eq_window.points):
             point = self.eq_window.points[selected_idx]
             gain_db = value / 10.0
-            point.setY(1.0 - (gain_db + 40.0) / 52.0)
+            point.setY(1.0 - (gain_db + 80.0) / 92.0)
             self.eq_window.update()
             self.gain_label.setText(f"Gain: {gain_db:.1f} dB")
 

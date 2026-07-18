@@ -57,8 +57,8 @@ class EqCurve:
 
         # Convert interpolated y_raw to gain in dBFS
         # y_raw = 0.0 -> MAX_GAIN_DB (12.0)
-        # y_raw = 1.0 -> MIN_GAIN_DB (-40.0)
-        gain_db = (1.0 - y_raw) * 52.0 - 40.0
+        # y_raw = 1.0 -> MIN_GAIN_DB (-80.0)
+        gain_db = (1.0 - y_raw) * 92.0 - 80.0
 
         # Convert dBFS to linear gain
         return float(10.0 ** (gain_db / 20.0))

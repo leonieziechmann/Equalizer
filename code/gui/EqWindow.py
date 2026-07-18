@@ -56,6 +56,56 @@ class EqWindow(QWidget):
                 )
 
 
+            # Paint Grid Lines and Labels (dB and Frequency ticks)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            
+            # Setup font
+            font = painter.font()
+            font.setPointSize(8)
+            painter.setFont(font)
+
+            # 1. Draw dB Grid Lines and Labels
+            db_ticks = [12, 0, -20, -40, -60, -80]
+            for db in db_ticks:
+                y = 1.0 - (db + 80.0) / 92.0
+                p_left = self.toScreenPos(QPointF(0, y))
+                p_right = self.toScreenPos(QPointF(1, y))
+                
+                # Draw subtle grid line
+                painter.setPen(QPen(QColor(70, 70, 70, 150), 1, Qt.PenStyle.DashLine))
+                painter.drawLine(p_left, p_right)
+                
+                # Draw dB label next to left border
+                painter.setPen(QPen(QColor(180, 180, 180)))
+                label = f"{db:+d} dB" if db != 0 else "0 dB"
+                text_rect = painter.fontMetrics().boundingRect(label)
+                painter.drawText(
+                    int(p_left.x() - text_rect.width() - 8),
+                    int(p_left.y() + text_rect.height() / 2 - 2),
+                    label
+                )
+
+            # 2. Draw Frequency Grid Lines and Labels
+            freq_ticks = [50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000]
+            for f_val in freq_ticks:
+                x = np.log10(f_val / 20.0) / 3.0
+                p_top = self.toScreenPos(QPointF(x, 0))
+                p_bottom = self.toScreenPos(QPointF(x, 1))
+                
+                # Draw subtle grid line
+                painter.setPen(QPen(QColor(70, 70, 70, 150), 1, Qt.PenStyle.DashLine))
+                painter.drawLine(p_top, p_bottom)
+                
+                # Draw frequency label below the bottom border
+                painter.setPen(QPen(QColor(180, 180, 180)))
+                label = f"{f_val/1000:.0f}kHz" if f_val >= 1000 else f"{f_val}Hz"
+                text_rect = painter.fontMetrics().boundingRect(label)
+                painter.drawText(
+                    int(p_bottom.x() - text_rect.width() / 2),
+                    int(p_bottom.y() + text_rect.height() + 4),
+                    label
+                )
+
             # Polynomobjekt
 
 

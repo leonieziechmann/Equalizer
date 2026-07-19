@@ -1,5 +1,54 @@
 import numpy as np
 
+_twiddles = {}
+
+def get_twiddle(N):
+    if N not in _twiddles:
+        _twiddles[N] = np.exp(-2j * np.pi * np.arange(N // 2) / N)
+    return _twiddles[N]
+
+def fft(x):
+    N = len(x)
+    if N <= 4:
+        if N <= 1:
+            return x
+        elif N == 2:
+            return np.array([x[0] + x[1], x[0] - x[1]], dtype=complex)
+        elif N == 4:
+            e0, e1 = x[0] + x[2], x[0] - x[2]
+            o0, o1 = x[1] + x[3], x[1] - x[3]
+            return np.array([
+                e0 + o0,
+                e1 - 1j * o1,
+                e0 - o0,
+                e1 + 1j * o1
+            ], dtype=complex)
+            
+    even = fft(x[0::2])
+    odd = fft(x[1::2])
+    T = get_twiddle(N) * odd
+    return np.concatenate([even + T, even - T])
+
+def ifft(x):
+    N = len(x)
+    return np.conjugate(fft(np.conjugate(x))) / N
+
+def irfft(spec, n):
+    """
+    Inverse Real Fast Fourier Transform implemented in pure Python.
+    Assumes n is a power of 2.
+    """
+    complex_dtype = np.complex128 if np.issubdtype(spec.dtype, np.complex128) else np.complex64
+    full_spec = np.zeros(n, dtype=complex_dtype)
+    full_spec[:n//2 + 1] = spec
+    if n % 2 == 0:
+        full_spec[n//2 + 1:] = np.conjugate(spec[1:n//2][::-1])
+    else:
+        full_spec[n//2 + 1:] = np.conjugate(spec[1:n//2 + 1][::-1])
+    x_complex = ifft(full_spec)
+    return np.real(x_complex)
+
+
 def get_window(window_type, window_length):
     """
     Returns a window function of the specified type and length.
@@ -137,7 +186,7 @@ def _istft_single_channel(stft_matrix, window_length, hop_length, fft_length, wi
         
         spec = stft_matrix[:, i]
         # Perform inverse FFT
-        segment = np.fft.irfft(spec, n=fft_length)
+        segment = irfft(spec, n=fft_length)
         # Truncate if FFT length is larger than the window length
         segment = segment[:window_length]
         

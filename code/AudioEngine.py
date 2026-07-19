@@ -4,6 +4,7 @@ from PySide6.QtWidgets import QSlider
 import numpy as np
 import sounddevice as sd
 from audio.spectral_transformer import SpectralTransformer
+from audio import irfft
 
 if TYPE_CHECKING:
     from gui.EqWindow import EqWindow
@@ -389,8 +390,8 @@ class AudioEngine():
         self.current_mag_post = (np.abs(specL) + np.abs(specR)) / 2.0
 
         # Back to time domain
-        winL = np.fft.irfft(specL, self.windowLength)
-        winR = np.fft.irfft(specR, self.windowLength)
+        winL = irfft(specL, self.windowLength)
+        winR = irfft(specR, self.windowLength)
 
 
         # add into synthesis buffer

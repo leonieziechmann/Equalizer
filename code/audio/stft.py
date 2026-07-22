@@ -1,5 +1,5 @@
 import numpy as np
-from .fft import rfft, irfft
+from .fft import fft
 
 def get_window(window_type: str, window_length: int) -> np.ndarray:
     """
@@ -78,8 +78,16 @@ def stft(sig: np.ndarray, window_length: int, hop_length: int, window_type: str 
         end = start + window_length
         # Multiply each channel by analysis window
         segment = sig_padded[start:end, :] * w_a[:, np.newaxis]
-        # Perform real FFT along the sample axis (axis 0)
-        stft_matrix[:, i, :] = rfft(segment, n=fft_length, axis=0)
+        
+        # Zero-pad segment to fft_length if necessary
+        if fft_length > window_length:
+            seg_padded = np.pad(segment, ((0, fft_length - window_length), (0, 0)), mode='constant')
+        else:
+            seg_padded = segment[:fft_length, :]
+
+        for ch in range(num_channels):
+            full_fft = fft(seg_padded[:, ch])
+            stft_matrix[:, i, ch] = full_fft[:num_bins]
 
     if not is_multichannel:
         stft_matrix = stft_matrix[:, :, 0]

@@ -13,8 +13,6 @@ from audio import (
     istft,
     fft,
     ifft,
-    rfft,
-    irfft,
     evaluate_reconstruction_metrics
 )
 
@@ -28,10 +26,10 @@ def test_fft_primitives():
     x_recon = ifft(X)
     assert np.allclose(x_complex, x_recon), "Complex FFT/IFFT roundtrip failed"
     
-    # Real FFT & IRFFT roundtrip
-    X_real = rfft(x)
-    x_real_recon = irfft(X_real, len(x))
-    assert np.allclose(x, x_real_recon), "Real FFT/IRFFT roundtrip failed"
+    # Real signal FFT & IFFT roundtrip
+    X_full = fft(x)
+    x_real_recon = np.real(ifft(X_full))
+    assert np.allclose(x, x_real_recon), "Real signal FFT/IFFT roundtrip failed"
     print("FFT and IFFT primitives: PASSED")
 
 def test_roundtrip_1d():

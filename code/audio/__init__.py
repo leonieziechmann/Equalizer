@@ -1,6 +1,6 @@
 from .spectral_transformer import SpectralTransformer, Spectrum
 from .stft import stft, istft, get_window
-from .fft import fft, ifft, irfft, rfft, rfftfreq
+from .fft import fft, ifft, rfftfreq
 from .eq_curve import EqCurve
 from .metrics import (
     evaluate_reconstruction_metrics,
@@ -20,8 +20,6 @@ __all__ = [
     'get_window',
     'fft',
     'ifft',
-    'irfft',
-    'rfft',
     'rfftfreq',
     'evaluate_reconstruction_metrics',
     'compute_rms',

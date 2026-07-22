@@ -5,7 +5,7 @@ import sounddevice as sd
 import soundfile as sf
 from audio.spectral_transformer import SpectralTransformer
 from audio.eq_curve import EqCurve
-from audio.fft import irfft
+from audio.fft import ifft
 from audio.metrics import evaluate_reconstruction_metrics, compute_energy
 
 class AudioEngine:
@@ -416,7 +416,8 @@ class AudioEngine:
         if num_ch > 2:
             for c in range(num_ch):
                 spec_c = self.Zxx_channels[c][:, self.frame] * self.gains if self.eq_ZxxL is None else self.Zxx_channels[c][:, self.frame]
-                win_c = irfft(spec_c, n=self.fft_length)[:self.windowLength]
+                full_spec_c = np.concatenate([spec_c, np.conjugate(spec_c[1:-1][::-1])])
+                win_c = np.real(ifft(full_spec_c))[:self.windowLength]
                 self.buffers_ch[c] += win_c
         else:
             # Get pre-computed equalized spectrum frame if available
@@ -432,9 +433,11 @@ class AudioEngine:
                 self.current_mag_pre = (np.abs(self.ZxxL[:, self.frame]) + np.abs(self.ZxxR[:, self.frame])) / 2.0
                 self.current_mag_post = (np.abs(specL) + np.abs(specR)) / 2.0
 
-            # Synthesis via inverse real FFT into time space
-            winL = irfft(specL, n=self.fft_length)[:self.windowLength]
-            winR = irfft(specR, n=self.fft_length)[:self.windowLength]
+            # Synthesis via standard IFFT into time space
+            full_specL = np.concatenate([specL, np.conjugate(specL[1:-1][::-1])])
+            full_specR = np.concatenate([specR, np.conjugate(specR[1:-1][::-1])])
+            winL = np.real(ifft(full_specL))[:self.windowLength]
+            winR = np.real(ifft(full_specR))[:self.windowLength]
 
             # Accumulate into synthesis buffer
             self.bufferL += winL

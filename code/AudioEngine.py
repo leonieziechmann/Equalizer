@@ -369,13 +369,22 @@ class AudioEngine:
             raise sd.CallbackStop()
         outdata[:] = block
 
-    def next_block(self):       
-        if self.frame >= self.ZxxL.shape[1]:
+    def _ifft_window(self, spec: np.ndarray) -> np.ndarray:
+        full_spec = np.concatenate([spec, np.conjugate(spec[1:-1][::-1])])
+        return np.real(ifft(full_spec))[:self.windowLength]
+
+    def next_block(self):
+        total_frames = self.ZxxL.shape[1]
+        num_ch = getattr(self, 'num_channels', 2)
+
+        # 1. End-of-signal / looping check
+        if self.frame >= total_frames:
             if self.loop:
                 self.frame = 0
                 self.bufferL.fill(0)
                 self.bufferR.fill(0)
-                self.norm_buffer.fill(0)
+                if hasattr(self, 'norm_buffer'):
+                    self.norm_buffer.fill(0)
                 if hasattr(self, 'buffers_ch'):
                     for b in self.buffers_ch:
                         b.fill(0)
@@ -383,94 +392,51 @@ class AudioEngine:
                 if hasattr(self, 'current_mag_pre') and self.current_mag_pre is not None:
                     self.current_mag_pre.fill(0)
                     self.current_mag_post.fill(0)
-                if not np.any(self.norm_buffer > 1e-12):
+                tail_has_data = np.any(np.abs(self.buffers_ch[0]) > 1e-12) if num_ch > 2 else (np.any(np.abs(self.bufferL) > 1e-12) or np.any(np.abs(self.bufferR) > 1e-12))
+                if not tail_has_data:
                     self.playing = False
                     return None
-                else:
-                    norm = self.norm_buffer[:self.step].copy()
-                    norm[norm < 1e-12] = 1.0
 
-                    num_ch = getattr(self, 'num_channels', 2)
-                    if num_ch > 2:
-                        ch_outs = []
-                        for c in range(num_ch):
-                            out_c = self.buffers_ch[c][:self.step] / norm
-                            self.buffers_ch[c][:-self.step] = self.buffers_ch[c][self.step:]
-                            self.buffers_ch[c][-self.step:] = 0
-                            ch_outs.append(out_c)
-                        hop = np.column_stack(ch_outs)
-                    else:
-                        outL = self.bufferL[:self.step] / norm
-                        outR = self.bufferR[:self.step] / norm
-                        hop = np.column_stack((outL, outR))
-
-                    self.bufferL[:-self.step] = self.bufferL[self.step:]
-                    self.bufferL[-self.step:] = 0
-                    self.bufferR[:-self.step] = self.bufferR[self.step:]
-                    self.bufferR[-self.step:] = 0
-                    self.norm_buffer[:-self.step] = self.norm_buffer[self.step:]
-                    self.norm_buffer[-self.step:] = 0
-                    return hop
-
-        num_ch = getattr(self, 'num_channels', 2)
-        if num_ch > 2:
-            for c in range(num_ch):
-                spec_c = self.Zxx_channels[c][:, self.frame] * self.gains if self.eq_ZxxL is None else self.Zxx_channels[c][:, self.frame]
-                full_spec_c = np.concatenate([spec_c, np.conjugate(spec_c[1:-1][::-1])])
-                win_c = np.real(ifft(full_spec_c))[:self.windowLength]
-                self.buffers_ch[c] += win_c
-        else:
-            # Get pre-computed equalized spectrum frame if available
-            if self.eq_ZxxL is not None and self.eq_ZxxR is not None:
-                specL = self.eq_ZxxL[:, self.frame]
-                specR = self.eq_ZxxR[:, self.frame]
+        # 2. Accumulate current frame if available
+        if self.frame < total_frames:
+            if num_ch > 2:
+                for c in range(num_ch):
+                    spec_c = self.Zxx_channels[c][:, self.frame] * (1.0 if self.eq_ZxxL is not None else self.gains)
+                    self.buffers_ch[c] += self._ifft_window(spec_c)
             else:
-                specL = self.ZxxL[:, self.frame] * self.gains
-                specR = self.ZxxR[:, self.frame] * self.gains
+                if self.eq_ZxxL is not None and self.eq_ZxxR is not None:
+                    specL, specR = self.eq_ZxxL[:, self.frame], self.eq_ZxxR[:, self.frame]
+                else:
+                    specL = self.ZxxL[:, self.frame] * self.gains
+                    specR = self.ZxxR[:, self.frame] * self.gains
 
-            # Save magnitude spectra for visualizer
-            if hasattr(self, 'current_mag_pre') and self.current_mag_pre is not None:
-                self.current_mag_pre = (np.abs(self.ZxxL[:, self.frame]) + np.abs(self.ZxxR[:, self.frame])) / 2.0
-                self.current_mag_post = (np.abs(specL) + np.abs(specR)) / 2.0
+                if hasattr(self, 'current_mag_pre') and self.current_mag_pre is not None:
+                    self.current_mag_pre = (np.abs(self.ZxxL[:, self.frame]) + np.abs(self.ZxxR[:, self.frame])) / 2.0
+                    self.current_mag_post = (np.abs(specL) + np.abs(specR)) / 2.0
 
-            # Synthesis via standard IFFT into time space
-            full_specL = np.concatenate([specL, np.conjugate(specL[1:-1][::-1])])
-            full_specR = np.concatenate([specR, np.conjugate(specR[1:-1][::-1])])
-            winL = np.real(ifft(full_specL))[:self.windowLength]
-            winR = np.real(ifft(full_specR))[:self.windowLength]
+                self.bufferL += self._ifft_window(specL)
+                self.bufferR += self._ifft_window(specR)
 
-            # Accumulate into synthesis buffer
-            self.bufferL += winL
-            self.bufferR += winR        
+            self.frame += 1
 
-        self.norm_buffer += self.w_a
-
-        # Output first hop
-        norm = self.norm_buffer[:self.step].copy()
-        norm[norm < 1e-12] = 1.0
-
+        # 3. Extract unnormalized hop & shift buffers
         if num_ch > 2:
-            ch_outs = []
+            out_channels = []
             for c in range(num_ch):
-                out_c = self.buffers_ch[c][:self.step] / norm
+                out_c = self.buffers_ch[c][:self.step].copy()
                 self.buffers_ch[c][:-self.step] = self.buffers_ch[c][self.step:]
                 self.buffers_ch[c][-self.step:] = 0
-                ch_outs.append(out_c)
-            out_hop = np.column_stack(ch_outs)
+                out_channels.append(out_c)
+            out_hop = np.column_stack(out_channels)
         else:
-            outL = self.bufferL[:self.step] / norm
-            outR = self.bufferR[:self.step] / norm
+            outL = self.bufferL[:self.step].copy()
+            outR = self.bufferR[:self.step].copy()
             out_hop = np.column_stack((outL, outR))
 
-        # Shift buffer
-        self.bufferL[:-self.step] = self.bufferL[self.step:]
-        self.bufferR[:-self.step] = self.bufferR[self.step:]        
-        self.bufferL[-self.step:] = 0
-        self.bufferR[-self.step:] = 0       
-        self.norm_buffer[:-self.step] = self.norm_buffer[self.step:]
-        self.norm_buffer[-self.step:] = 0
-
-        self.frame += 1     
+            self.bufferL[:-self.step] = self.bufferL[self.step:]
+            self.bufferL[-self.step:] = 0
+            self.bufferR[:-self.step] = self.bufferR[self.step:]
+            self.bufferR[-self.step:] = 0
 
         return out_hop
 

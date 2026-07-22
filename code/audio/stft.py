@@ -1,23 +1,9 @@
 import numpy as np
+from scipy.signal.windows import hann
 from .fft import fft
 
 def get_window(window_type: str, window_length: int) -> np.ndarray:
-    """
-    Returns a window function of specified type and sample length.
-    
-    Supported window types:
-    - 'hann' / 'hanning': Raised cosine (Hann) window.
-    - 'hamming': Hamming window.
-    - 'rectangular' / 'boxcar' / None: Rectangular window (all ones).
-    """
-    if window_type in ('hann', 'hanning'):
-        return np.hanning(window_length)
-    elif window_type == 'hamming':
-        return np.hamming(window_length)
-    elif window_type in ('rectangular', 'boxcar') or window_type is None:
-        return np.ones(window_length)
-    else:
-        raise ValueError(f"Unknown window type: {window_type}")
+    return hann(window_length, sym=False)
 
 def stft(sig: np.ndarray, window_length: int, hop_length: int, window_type: str = 'hann', fft_length: int = None) -> np.ndarray:
     """

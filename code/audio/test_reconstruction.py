@@ -17,6 +17,7 @@ from audio import (
     irfft,
     evaluate_reconstruction_metrics
 )
+from audio.fft import fft_block, rfft_block, irfft_block
 
 def test_fft_primitives():
     print("Testing FFT and IFFT primitives...")
@@ -33,6 +34,29 @@ def test_fft_primitives():
     x_real_recon = irfft(X_real, len(x))
     assert np.allclose(x, x_real_recon), "Real FFT/IRFFT roundtrip failed"
     print("FFT and IFFT primitives: PASSED")
+
+def test_fft_block_primitives():
+    print("Testing Compute Shader / Vectorized Block FFT primitives...")
+    num_signals = 16
+    N = 128
+    x_block = np.random.uniform(-1.0, 1.0, (num_signals, N))
+    x_complex_block = x_block + 0.5j * np.roll(x_block, 1, axis=1)
+
+    # Complex Block FFT & IFFT roundtrip
+    X_block = fft_block(x_complex_block, is_inverse=False)
+    x_recon_block = fft_block(X_block, is_inverse=True)
+    assert np.allclose(x_complex_block, x_recon_block), "Complex Block FFT/IFFT roundtrip failed"
+
+    # Real Block FFT & IRFFT roundtrip
+    X_real_block = rfft_block(x_block, n=N)
+    x_real_recon_block = irfft_block(X_real_block, n=N)
+    assert np.allclose(x_block, x_real_recon_block), "Real Block FFT/IRFFT roundtrip failed"
+
+    # Verify against numpy reference
+    np_X_real = np.fft.rfft(x_block, n=N, axis=-1)
+    assert np.allclose(X_real_block, np_X_real), "Block Real FFT mismatch with numpy reference"
+
+    print("Compute Shader / Vectorized Block FFT primitives: PASSED")
 
 def test_roundtrip_1d():
     print("Testing 1D signal perfect reconstruction...")
@@ -228,6 +252,8 @@ def test_audio_engine():
 
 if __name__ == '__main__':
     test_fft_primitives()
+    print("-" * 40)
+    test_fft_block_primitives()
     print("-" * 40)
     test_roundtrip_1d()
     print("-" * 40)

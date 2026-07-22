@@ -1,5 +1,5 @@
 import numpy as np
-from .fft import rfft, irfft
+from .fft import rfft_block, irfft_block
 
 def get_window(window_type: str, window_length: int) -> np.ndarray:
     """
@@ -21,7 +21,8 @@ def get_window(window_type: str, window_length: int) -> np.ndarray:
 
 def stft(sig: np.ndarray, window_length: int, hop_length: int, window_type: str = 'hann', fft_length: int = None) -> np.ndarray:
     """
-    Computes Short-Time Fourier Transform (STFT) of a 1D (mono) or 2D (stereo/multichannel) signal.
+    Computes Short-Time Fourier Transform (STFT) of a 1D (mono) or 2D (stereo/multichannel) signal
+    by computing the whole block of frames at once using compute shader block processing.
     
     Parameters:
         sig (np.ndarray): Input signal array of shape (samples,) or (samples, channels).
@@ -69,17 +70,24 @@ def stft(sig: np.ndarray, window_length: int, hop_length: int, window_type: str 
     # Pad signal with zeros at both ends
     sig_padded = np.pad(sig, ((pad_width, end_pad), (0, 0)), mode='constant')
 
-    num_bins = fft_length // 2 + 1
-    complex_dtype = np.complex128 if np.issubdtype(sig.dtype, np.float64) else np.complex64
-    stft_matrix = np.zeros((num_bins, num_frames, num_channels), dtype=complex_dtype)
+    # Construct frame sample index matrix: shape (num_frames, window_length)
+    frame_starts = np.arange(num_frames) * hop_length
+    sample_offsets = np.arange(window_length)
+    idx = frame_starts[:, np.newaxis] + sample_offsets[np.newaxis, :]
 
-    for i in range(num_frames):
-        start = i * hop_length
-        end = start + window_length
-        # Multiply each channel by analysis window
-        segment = sig_padded[start:end, :] * w_a[:, np.newaxis]
-        # Perform real FFT along the sample axis (axis 0)
-        stft_matrix[:, i, :] = rfft(segment, n=fft_length, axis=0)
+    # Extract all windowed frame segments: shape (num_frames, window_length, num_channels)
+    segments = sig_padded[idx, :] * w_a[np.newaxis, :, np.newaxis]
+
+    # Reshape for whole block FFT processing: shape (num_frames * num_channels, window_length)
+    flat_segments = np.transpose(segments, (0, 2, 1)).reshape(num_frames * num_channels, window_length)
+
+    # Compute real FFT for the whole block of frames at once
+    flat_stft = rfft_block(flat_segments, n=fft_length)
+
+    # Reshape back to STFT matrix: shape (freq_bins, num_frames, num_channels)
+    num_bins = fft_length // 2 + 1
+    stft_matrix = flat_stft.reshape(num_frames, num_channels, num_bins)
+    stft_matrix = np.transpose(stft_matrix, (2, 0, 1))
 
     if not is_multichannel:
         stft_matrix = stft_matrix[:, :, 0]
@@ -88,8 +96,8 @@ def stft(sig: np.ndarray, window_length: int, hop_length: int, window_type: str 
 
 def istft(stft_matrix: np.ndarray, window_length: int, hop_length: int, fft_length: int, window_type: str = 'hann', original_length: int = None) -> np.ndarray:
     """
-    Performs Inverse Short-Time Fourier Transform (ISTFT) with overlap-add normalization
-    to guarantee exact signal reconstruction.
+    Performs Inverse Short-Time Fourier Transform (ISTFT) with whole-block IFFT and
+    overlap-add normalization to guarantee exact signal reconstruction.
     
     Parameters:
         stft_matrix (np.ndarray): Complex STFT coefficient matrix.
@@ -130,24 +138,22 @@ def _istft_single_channel(stft_matrix: np.ndarray, window_length: int, hop_lengt
     reconstructed = np.zeros(total_length, dtype=float_dtype)
     norm_buffer = np.zeros(total_length, dtype=float_dtype)
 
-    # Get analysis window (used to compute normalization denominator)
     w_a = get_window(window_type, window_length).astype(float_dtype)
-    # Synthesis window: rectangular (all ones) for standard overlap-add reconstruction
     w_s = np.ones(window_length, dtype=float_dtype)
 
-    for i in range(num_frames):
-        start = i * hop_length
-        end = start + window_length
-        
-        spec = stft_matrix[:, i]
-        # Perform inverse real FFT
-        segment = irfft(spec, n=fft_length)
-        # Truncate to window length if fft_length > window_length
-        segment = segment[:window_length]
-        
-        # Accumulate overlap-add
-        reconstructed[start:end] += segment * w_s
-        norm_buffer[start:end] += w_a * w_s
+    # Whole-block inverse real FFT computation
+    stft_frames = stft_matrix.T  # Shape: (num_frames, num_bins)
+    segments = irfft_block(stft_frames, n=fft_length)  # Shape: (num_frames, fft_length)
+    if fft_length > window_length:
+        segments = segments[:, :window_length]
+
+    # Vectorized Overlap-Add across all frames
+    frame_starts = np.arange(num_frames) * hop_length
+    sample_offsets = np.arange(window_length)
+    idx = frame_starts[:, np.newaxis] + sample_offsets[np.newaxis, :]
+
+    np.add.at(reconstructed, idx.ravel(), (segments * w_s[np.newaxis, :]).ravel())
+    np.add.at(norm_buffer, idx.ravel(), (np.tile(w_a * w_s, num_frames)).ravel())
 
     # Normalize to compensate for windowing overlap sum
     norm_buffer[norm_buffer < 1e-12] = 1.0

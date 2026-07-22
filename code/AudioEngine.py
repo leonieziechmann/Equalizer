@@ -13,8 +13,8 @@ class AudioEngine:
     playing = False
     audio_loaded = False
     instance: 'AudioEngine'
-    windowLength = 1024
-    step = 512      # 50 % Overlap
+    windowLength = 512
+    step = 256      # 50 % Overlap
     overlap = windowLength - step
     
     def __init__(self, eq_source=None):

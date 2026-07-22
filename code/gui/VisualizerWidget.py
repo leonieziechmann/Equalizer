@@ -160,10 +160,14 @@ class VisualizerWidget(QWidget):
         if not engine or not engine.audio_loaded:
             return
             
-        # Apply the current EQ gains column-wise
-        gains_col = engine.gains[:, np.newaxis]
-        post_ZxxL = engine.ZxxL * gains_col
-        post_ZxxR = engine.ZxxR * gains_col
+        # Use pre-computed equalized spectra if available
+        if engine.eq_ZxxL is not None and engine.eq_ZxxR is not None:
+            post_ZxxL = engine.eq_ZxxL
+            post_ZxxR = engine.eq_ZxxR
+        else:
+            gains_col = engine.gains[:, np.newaxis]
+            post_ZxxL = engine.ZxxL * gains_col
+            post_ZxxR = engine.ZxxR * gains_col
         
         mag_post = (np.abs(post_ZxxL) + np.abs(post_ZxxR)) / 2.0
         mag_post_normalized = mag_post / self.mag_peak

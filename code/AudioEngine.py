@@ -13,8 +13,8 @@ class AudioEngine:
     playing = False
     audio_loaded = False
     instance: 'AudioEngine'
-    windowLength = 512
-    step = 256      # 50 % Overlap
+    windowLength = 1024
+    step = 512      # 50 % Overlap
     overlap = windowLength - step
     
     def __init__(self, eq_source=None):
@@ -44,6 +44,12 @@ class AudioEngine:
         self.db_envelope_recon = None
         self.loop = False
         self.sig = None
+        self.spectrum = None
+        self.eq_spectrum = None
+        self.ZxxL = None
+        self.ZxxR = None
+        self.eq_ZxxL = None
+        self.eq_ZxxR = None
         
         # Populate gains with initial EQ curve configuration
         self.update_gains()
@@ -66,35 +72,49 @@ class AudioEngine:
         else:
             self.gains = np.ones(num_bins, dtype=np.float32)
 
+        if self.audio_loaded and self.ZxxL is not None:
+            gains_col = self.gains[:, np.newaxis]
+            self.eq_ZxxL = self.ZxxL * gains_col
+            self.eq_ZxxR = self.ZxxR * gains_col
+            if self.spectrum is not None:
+                eq_data = np.stack([self.eq_ZxxL, self.eq_ZxxR], axis=-1)
+                from audio.spectral_transformer import Spectrum
+                self.eq_spectrum = Spectrum(
+                    data=eq_data,
+                    sample_rate=self.spectrum.sample_rate,
+                    window_length=self.spectrum.window_length,
+                    hop_length=self.spectrum.hop_length,
+                    fft_length=self.spectrum.fft_length,
+                    original_length=self.spectrum.original_length,
+                    window_type=self.spectrum.window_type,
+                    num_channels=self.spectrum.num_channels
+                )
+
         self.update_equalized_envelope()
 
     def compare_energy(self):
         if not self.audio_loaded:
             return
         
-        spectrum = self.transformer.analyze((self.sig, self.sample_rate))
-        reconstructed = self.transformer.synthesize(spectrum)
-        
         energy_orig = compute_energy(self.sig)
-        energy_recon = compute_energy(reconstructed)
         print("Energy Original:", energy_orig)
-        print("Energy Reconstructed:", energy_recon)
-        print()
 
         print("RMS Original:", np.sqrt(np.mean(self.sig ** 2)))
-        print("RMS Reconstructed:", np.sqrt(np.mean(reconstructed ** 2)))
         
 
     def get_energy_comparison(self) -> str:
         if not self.audio_loaded:
             return "RMS Original: - | RMS Equalized: -"
         
-        spectrum = self.transformer.analyze((self.sig, self.sample_rate))
-        spectrum = self.transformer.apply_equalizer(spectrum, self.gains)
-        reconstructed = self.transformer.synthesize(spectrum)
-        
         rms_orig = np.sqrt(np.mean(self.sig ** 2))
-        rms_recon = np.sqrt(np.mean(reconstructed ** 2))
+        if self.eq_ZxxL is not None:
+            # Estimate via frequency domain
+            total_energy = np.sum(np.abs(self.eq_ZxxL)**2) + np.sum(np.abs(self.eq_ZxxR)**2)
+            # Scale approximation
+            scale = 2.0 / (self.windowLength * self.ZxxL.shape[1])
+            rms_recon = np.sqrt(total_energy * scale)
+        else:
+            rms_recon = rms_orig
         
         return f"RMS Original: {rms_orig:.4f} | RMS Equalized: {rms_recon:.4f}"
         
@@ -102,11 +122,25 @@ class AudioEngine:
         if not self.audio_loaded:
             return None
         
-        spectrum = self.transformer.analyze((self.sig, self.sample_rate))
-        spectrum = self.transformer.apply_equalizer(spectrum, self.gains)
-        reconstructed = self.transformer.synthesize(spectrum)
-        
-        return evaluate_reconstruction_metrics(self.sig, reconstructed)
+        if self.eq_spectrum is not None:
+            # Fast snippet synthesis (first 2 seconds max) to avoid lagging UI with full track synthesis
+            frames_to_test = min(self.ZxxL.shape[1], int(2.0 * self.sample_rate / self.step))
+            from audio.spectral_transformer import Spectrum
+            short_eq_spec = Spectrum(
+                data=self.eq_spectrum.data[:, :frames_to_test, :],
+                sample_rate=self.eq_spectrum.sample_rate,
+                window_length=self.eq_spectrum.window_length,
+                hop_length=self.eq_spectrum.hop_length,
+                fft_length=self.eq_spectrum.fft_length,
+                original_length=frames_to_test * self.step,
+                window_type=self.eq_spectrum.window_type,
+                num_channels=self.eq_spectrum.num_channels
+            )
+            reconstructed = self.transformer.synthesize(short_eq_spec)
+            sig_chunk = self.sig[:len(reconstructed)]
+            return evaluate_reconstruction_metrics(sig_chunk, reconstructed)
+        else:
+            return evaluate_reconstruction_metrics(self.sig, self.sig)
 
     def compute_energy(self, signal):
         return compute_energy(signal)
@@ -121,12 +155,12 @@ class AudioEngine:
         self.sig = sig
         self.sample_rate = sr
 
-        # Analyze using SpectralTransformer
-        spectrum = self.transformer.analyze((sig, sr))
+        # Analyze using SpectralTransformer ONCE on track load
+        self.spectrum = self.transformer.analyze((sig, sr))
         
         # Extract left and right channel spectra
-        self.ZxxL = spectrum.data[:, :, 0]
-        self.ZxxR = spectrum.data[:, :, 1]
+        self.ZxxL = self.spectrum.data[:, :, 0]
+        self.ZxxR = self.spectrum.data[:, :, 1]
 
         # Compute mag_peak for normalization
         mag_pre = (np.abs(self.ZxxL) + np.abs(self.ZxxR)) / 2.0
@@ -173,14 +207,34 @@ class AudioEngine:
         return envelope
 
     def update_equalized_envelope(self):
-        if not self.audio_loaded:
+        if not self.audio_loaded or self.eq_ZxxL is None:
             return
         
-        spectrum = self.transformer.analyze((self.sig, self.sample_rate))
-        spectrum = self.transformer.apply_equalizer(spectrum, self.gains)
-        reconstructed = self.transformer.synthesize(spectrum)
+        # Fast frequency-domain envelope approximation to avoid synthesizing the entire track
+        energy_mono = (np.sum(np.abs(self.eq_ZxxL)**2, axis=0) + np.sum(np.abs(self.eq_ZxxR)**2, axis=0)) / 2.0
         
-        self.db_envelope_recon = self.compute_db_envelope(reconstructed)
+        # Scale to rough time domain amplitude via Parseval mapping
+        scale = 2.0 / self.windowLength
+        rms_frames = np.sqrt(energy_mono / self.windowLength) * scale
+        
+        num_frames = len(rms_frames)
+        num_points = min(1000, num_frames)
+        block_size = max(1, num_frames // num_points)
+        
+        envelope = np.zeros(1000, dtype=np.float32)
+        for i in range(1000):
+            start = i * block_size
+            end = min(num_frames, (i + 1) * block_size)
+            if start < end:
+                block_rms = np.mean(rms_frames[start:end])
+                envelope[i] = 20 * np.log10(block_rms + 1e-6)
+                
+        # Align roughly with original track dB range
+        if self.db_envelope_orig is not None and np.max(self.db_envelope_orig) > -80:
+             diff = np.max(envelope) - np.max(self.db_envelope_orig)
+             envelope -= diff
+             
+        self.db_envelope_recon = envelope
 
     def set_gain(self, start_bin: int, end_bin: int, gain: float):
         self.gains[start_bin:end_bin] = gain
@@ -268,15 +322,19 @@ class AudioEngine:
                     self.bufferR = self.bufferR[256:]
                     return hop
 
-        # Apply equalizer
-        specL = self.ZxxL[:, self.frame] * self.gains
-        specR = self.ZxxR[:, self.frame] * self.gains
+        # Get pre-computed equalized spectrum frame if available
+        if self.eq_ZxxL is not None and self.eq_ZxxR is not None:
+            specL = self.eq_ZxxL[:, self.frame]
+            specR = self.eq_ZxxR[:, self.frame]
+        else:
+            specL = self.ZxxL[:, self.frame] * self.gains
+            specR = self.ZxxR[:, self.frame] * self.gains
 
         # Save magnitude spectra for visualizer
         self.current_mag_pre = (np.abs(self.ZxxL[:, self.frame]) + np.abs(self.ZxxR[:, self.frame])) / 2.0
         self.current_mag_post = (np.abs(specL) + np.abs(specR)) / 2.0
 
-        # Synthesis via inverse real FFT
+        # Synthesis via inverse real FFT into time space
         winL = irfft(specL, self.windowLength)
         winR = irfft(specR, self.windowLength)
 
@@ -298,13 +356,10 @@ class AudioEngine:
         return np.column_stack((outL, outR))
 
     def export_audio(self, output_path: str) -> bool:
-        if not self.audio_loaded:
+        if not self.audio_loaded or self.eq_spectrum is None:
             return False
         try:
-            spectrum = self.transformer.analyze((self.sig, self.sample_rate))
-            spectrum = self.transformer.apply_equalizer(spectrum, self.gains)
-            reconstructed = self.transformer.synthesize(spectrum)
-            
+            reconstructed = self.transformer.synthesize(self.eq_spectrum)
             sf.write(output_path, reconstructed, self.sample_rate)
             return True
         except Exception as e:
